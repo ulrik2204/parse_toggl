@@ -1,5 +1,7 @@
 import os
 from pathlib import Path
+from tracemalloc import start
+from dateutil.parser import parse
 from dotenv import load_dotenv
 from matplotlib import pyplot as plt
 from datetime import datetime, timedelta
@@ -96,7 +98,6 @@ def calculate_overtime_by_filepath(csv: Path, description: str, start_date: date
     and 8 hours, and outputs the sum of the time differences (overtime).
     """
     df = pd.read_csv(csv, sep=",", quotechar='"')
-    print(df)
 
     # Convert 'Duration' to timedelta (assuming format is HH:MM:SS or similar)
     df['duration'] = pd.to_timedelta(df['Duration'])
@@ -104,11 +105,7 @@ def calculate_overtime_by_filepath(csv: Path, description: str, start_date: date
 
 
 def calculate_overtime_in_df(df: pd.DataFrame, description: str, start_date: datetime, end_date: datetime):
-    print("desc", description)
-    print("proj", df["description"].str.contains("Jobb"))
-    # & (df["start"] >= start_date) & (df["stop"] <= end_date)
     df = df[(df["description"].str.lower().str.contains(description.lower()))]
-    print(df)
 
     # Convert 'duration' to timedelta (assuming format is HH:MM:SS or similar)
     # Filter by Gjensidige project
@@ -120,8 +117,7 @@ def calculate_overtime_in_df(df: pd.DataFrame, description: str, start_date: dat
     eight_hours = pd.Timedelta(hours=8).seconds
     # Calcualte the time difference in seconds
     df['time_diff_seconds'] = (durations_seconds - eight_hours)
-    print(df[["start", "stop", "duration", "time_diff_seconds"]])
-    print(df["time_diff_seconds"])
+    print(df[["project_id", "description", "start", "stop", "duration", "time_diff_seconds"]])
 
     # Calculate total overtime
     total_overtime = df['time_diff_seconds'].sum()
@@ -136,7 +132,20 @@ def calculate_overtime_in_df(df: pd.DataFrame, description: str, start_date: dat
     ## Add a title to the figure about the anount of overtime
     plt.title(f"Overtime per day (total overtime: {total_overtime})")
 
+
+class Env:
+    load_dotenv()
+    csv: str | None = os.getenv("CSV", default=None)
+    start_date: str | None = os.getenv("START_DATE", default=None)
+    end_date: str | None = os.getenv("END_DATE", default=None)
+    api_token: str | None = os.getenv("TOGGL_API_TOKEN", default=None)
+    description: str | None = os.getenv("DESCRIPTION", default=None)
     
+   
+def safe_date_parse(date: str | None) -> datetime | None:
+    if date:
+        return parse(date)
+    return None
 
 @click.command()
 @click.option('--csv', type=str)
@@ -149,12 +158,11 @@ def calculate_overtime(csv: str | None, start_date: datetime | None, end_date: d
     Reads a quoted CSV file, calculates the time difference between 'Duration'
     and 8 hours, and outputs the sum of the time differences (overtime).
     """
-    load_dotenv()
-    start = start_date or datetime.now()
-    end = end_date or datetime.now() - timedelta(days=30)
-    project = description or "Jobb"
+    start = start_date or safe_date_parse(Env.start_date) or datetime.now()
+    end = end_date or safe_date_parse(Env.end_date) or datetime.now() - timedelta(days=30)
+    project = description or Env.description or "Jobb"
+    token = api_token or Env.api_token 
     if not csv:
-        token = api_token or os.getenv("TOGGL_API_TOKEN") or ""
         if not token:
             raise ValueError("API token was not set in arguments or in .env file")
         calculate_overtime_by_toggl_api(token, project, start, end)
