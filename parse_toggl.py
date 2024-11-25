@@ -53,8 +53,8 @@ def fetch_toggl_entries(api_token: str, start_time: datetime, end_time: datetime
     
     # Fetch all time entries
 
-    # params={"start_date": start_time.strftime("%Y-%m-%d"), "end_date": end_time.strftime("%Y-%m-%d")}
-    response = requests.get(f"{TOGGL_API_BASE_URL}/me/time_entries", auth=auth, )
+    params={"start_date": start_time.strftime("%Y-%m-%d"), "end_date": end_time.strftime("%Y-%m-%d")}
+    response = requests.get(f"{TOGGL_API_BASE_URL}/me/time_entries", auth=auth, params=params )
     response.raise_for_status()
     time_entries: list[TogglTimeEntry] = response.json()
     return time_entries
@@ -105,22 +105,22 @@ def calculate_overtime_by_filepath(csv: Path, description: str, start_date: date
 
 
 def calculate_overtime_in_df(df: pd.DataFrame, description: str, start_date: datetime, end_date: datetime):
-    df = df[(df["description"].str.lower().str.contains(description.lower()))]
+    df = df[(df["description"].str.lower().str.contains(description.lower()))].copy()
 
     # Convert 'duration' to timedelta (assuming format is HH:MM:SS or similar)
     # Filter by Gjensidige project
 
-    durations = df["duration"]
+    durations = df.loc[:, "duration"]
     # Filter entries that are lower than 0
     durations_seconds = durations[durations > pd.Timedelta(0)].apply(lambda x: x.seconds)
     # Calculate the time_diff_seconds column (difference from 8 hours)
     eight_hours = pd.Timedelta(hours=8).seconds
     # Calcualte the time difference in seconds
-    df['time_diff_seconds'] = (durations_seconds - eight_hours)
+    df.loc[:,'time_diff_seconds'] = (durations_seconds - eight_hours)
     print(df[["project_id", "description", "start", "stop", "duration", "time_diff_seconds"]])
 
     # Calculate total overtime
-    total_overtime = df['time_diff_seconds'].sum()
+    total_overtime = float(df['time_diff_seconds'].sum())
     # Convert from seconds to hours and minutes
     total_overtime = timedelta(seconds=total_overtime)
 
@@ -158,8 +158,8 @@ def calculate_overtime(csv: str | None, start_date: datetime | None, end_date: d
     Reads a quoted CSV file, calculates the time difference between 'Duration'
     and 8 hours, and outputs the sum of the time differences (overtime).
     """
-    start = start_date or safe_date_parse(Env.start_date) or datetime.now()
-    end = end_date or safe_date_parse(Env.end_date) or datetime.now() - timedelta(days=30)
+    start = start_date or safe_date_parse(Env.start_date) or datetime.now() - timedelta(days=30)
+    end = end_date or safe_date_parse(Env.end_date) or datetime.now()
     project = description or Env.description or "Jobb"
     token = api_token or Env.api_token 
     if not csv:
