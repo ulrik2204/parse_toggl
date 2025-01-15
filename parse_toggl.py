@@ -1,4 +1,5 @@
 import os
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from tracemalloc import start
@@ -44,6 +45,58 @@ class TogglTimeEntry(TypedDict):
     workspace_id: int  # Workspace ID
 
 
+class ReportBody(TypedDict, total=False):
+    billable: bool
+    client_ids: List[int]
+    description: str
+    end_date: str
+    enrich_response: bool
+    first_id: int
+    first_row_number: Optional[int]
+    first_timestamp: int
+    group_ids: List[int]
+    grouped: bool
+    hide_amounts: bool
+    max_duration_seconds: int
+    min_duration_seconds: int
+    order_by: str
+    order_dir: str
+    page_size: int
+    project_ids: List[int]
+    rounding: int
+    rounding_minutes: int
+    startTime: str
+    start_date: str
+    tag_ids: List[int]
+    task_ids: List[int]
+    time_entry_ids: List[int]
+    user_ids: List[int]
+
+
+class ReportTimeEntry(TypedDict):
+    id: int
+    seconds: int
+    start: str
+    stop: str
+    at: str
+    at_tz: str
+
+
+class ReportResponse(TypedDict):
+    user_id: int
+    username: str
+    project_id: int
+    task_id: Optional[int]
+    billable: bool
+    description: str
+    tag_ids: List[int]
+    billable_amount_in_cents: Optional[int]
+    hourly_rate_in_cents: Optional[int]
+    currency: str
+    time_entries: List[ReportTimeEntry]
+    row_number: int
+
+
 TOGGL_API_BASE_URL = "https://api.track.toggl.com/api/v9"
 
 
@@ -70,9 +123,50 @@ def fetch_toggl_entries(
     return time_entries
 
 
+def fetch_toggl_report(
+    api_token: str,
+    workspace_id: str,
+    description: str,
+    start_date: datetime,
+    end_date: datetime,
+) -> list[ReportResponse]:
+    """
+    Fetch detailed time entries from the Toggl API filtered by the project name.
+    """
+    # Authenticate using API token
+    auth = HTTPBasicAuth(api_token, "api_token")
+    body: ReportBody = {
+        # "date_format": "YYYY-MM-DD",
+        # "display_mode": "date_and_time",
+        # "duration_format": "improved",
+        "start_date": start_date.strftime("%Y-%m-%d"),
+        "end_date": end_date.strftime("%Y-%m-%d"),
+        "first_row_number": None,
+        "grouped": False,
+        "order_by": "date",
+        "order_dir": "asc",
+        "grouped": False,
+        "description": description,
+    }
+    response = requests.post(
+        f"https://track.toggl.com/reports/api/v3/workspace/{workspace_id}/search/time_entries",
+        auth=auth,
+        json=body,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
 def format_toggl_entries(entries: List[TogglTimeEntry]) -> pd.DataFrame:
     """
     Formats the Toggl time entries into a Pandas DataFrame.
+    Returns:
+        pd.DataFrame: A DataFrame with the keys:
+            - project_id: Project ID of the time entry
+            - start: Start time of the time entry
+            - stop: Stop time of the time entry
+            - duration: Duration of the time entry
+            - description: Description of the time entry
     """
     df = pd.DataFrame(entries)
     df["start"] = pd.to_datetime(df["start"]).dt.tz_localize(None)
@@ -81,10 +175,52 @@ def format_toggl_entries(entries: List[TogglTimeEntry]) -> pd.DataFrame:
     return df
 
 
+def format_toggl_report(report: List[ReportResponse]) -> pd.DataFrame:
+    """
+    Formats the Toggl time entries into a Pandas DataFrame.
+    Returns:
+        pd.DataFrame: A DataFrame with the keys:
+            - project_id: Project ID of the time entry
+            - start: Start time of the time entry
+            - stop: Stop time of the time entry
+            - duration: Duration of the time entry
+            - description: Description of the time entry
+    """
+    df = pd.DataFrame()
+    df["project_id"] = [entry["project_id"] for entry in report]
+    df["start"] = pd.to_datetime(
+        pd.Series([entry["time_entries"][0]["start"] for entry in report])
+    ).dt.tz_localize(None)
+    df["stop"] = pd.to_datetime(
+        pd.Series([entry["time_entries"][0]["stop"] for entry in report])
+    ).dt.tz_localize(None)
+    df["duration"] = pd.to_timedelta(
+        [entry["time_entries"][0]["seconds"] for entry in report], unit="s"
+    )
+    df["description"] = [entry["description"] for entry in report]
+    return df
+
+
 def filter_by_date(
     df: pd.DataFrame, start_date: datetime, end_date: datetime
 ) -> pd.DataFrame:
     return df[(df["start"] >= start_date) & (df["stop"] <= end_date)]
+
+
+def calculate_overtime_by_toggl_report(
+    api_token: str,
+    workspace: str,
+    description: str,
+    start_date: datetime,
+    end_date: datetime,
+    workday_hours: int = 8,
+    fig_dir: Path | None = None,
+):
+    workspace = "4867825"
+    report = fetch_toggl_report(api_token, workspace, description, start_date, end_date)
+    df = format_toggl_report(report)
+    df = filter_by_date(df, start_date, end_date)
+    calculate_overtime_in_df(df, description, workday_hours, fig_dir)
 
 
 def calculate_overtime_by_toggl_api(
@@ -162,6 +298,7 @@ def calculate_overtime_in_df(
     durations_seconds = df.loc[:, "duration_seconds"]
     work_hours = pd.Timedelta(hours=workday_hours).seconds
     df.loc[:, "time_diff_seconds"] = durations_seconds - work_hours
+    df.loc[:, "time_diff"] = pd.to_timedelta(df["time_diff_seconds"], unit="s")
     print(
         df[
             [
@@ -170,7 +307,7 @@ def calculate_overtime_in_df(
                 "start",
                 "stop",
                 "duration_seconds",
-                "time_diff_seconds",
+                "time_diff",
             ]
         ]
     )
@@ -200,12 +337,69 @@ class Env:
     description: str | None = os.getenv("DESCRIPTION", default=None)
     fig_dir: str | None = os.getenv("FIG_DIR", default=None)
     workday_hours: int = int(os.getenv("WORKDAY_HOURS", default=8))
+    workspace: str | None = os.getenv("WORKSPACE", default=None)
 
 
 def safe_date_parse(date: str | None) -> datetime | None:
     if date:
         return parse(date)
     return None
+
+
+@dataclass
+class Options:
+    start_date: datetime
+    end_date: datetime
+    api_token: str
+    description: str
+    fig_dir: Path
+    workday_hours: int
+    workspace: str
+    csv: Path | None
+
+
+def setup_options(
+    *,
+    csv: str | None,
+    start_date: datetime | None,
+    end_date: datetime | None,
+    api_token: str | None,
+    description: str | None,
+    fig_dir: str | None,
+    workday_hours: int,
+    workspace: str | None,
+):
+    start = (
+        start_date
+        or safe_date_parse(Env.start_date)
+        or datetime.now() - timedelta(days=30)
+    )
+    end = end_date or safe_date_parse(Env.end_date) or datetime.now()
+    csv_param: Path | None = None
+    if csv_path := csv or Env.csv:
+        csv_param = convert_windows_path_to_wsl(csv_path)
+    desc = description or Env.description or "Jobb"
+    token = api_token or Env.api_token
+    fig_dir_str = fig_dir or Env.fig_dir or "plots"
+    workspace_var = workspace or Env.workspace or None
+    fig_path = Path(fig_dir_str)
+    if not token:
+        raise ValueError("API token was not set in arguments or in .env file")
+    if not fig_path.exists():
+        fig_path.mkdir(parents=True)
+    if not workspace_var:
+        raise ValueError("Workspace was not set in arguments or in .env file")
+
+    return Options(
+        start_date=start,
+        end_date=end,
+        api_token=token,
+        description=desc,
+        fig_dir=fig_path,
+        workday_hours=workday_hours,
+        workspace=workspace_var,
+        csv=csv_param,
+    )
 
 
 @click.command()
@@ -216,6 +410,7 @@ def safe_date_parse(date: str | None) -> datetime | None:
 @click.option("--description", type=str)
 @click.option("--fig_dir", type=str)
 @click.option("--workday_hours", type=int, default=8)
+@click.option("--workspace", type=str)
 def calculate_overtime(
     csv: str | None,
     start_date: datetime | None,
@@ -224,38 +419,47 @@ def calculate_overtime(
     description: str | None,
     fig_dir: str | None,
     workday_hours: int = 8,
+    workspace: str | None = None,
 ):
     """
     Reads a quoted CSV file, calculates the time difference between 'Duration'
     and 8 hours, and outputs the sum of the time differences (overtime).
     """
-    start = (
-        start_date
-        or safe_date_parse(Env.start_date)
-        or datetime.now() - timedelta(days=30)
+    options = setup_options(
+        start_date=start_date,
+        end_date=end_date,
+        api_token=api_token,
+        description=description,
+        fig_dir=fig_dir,
+        workday_hours=workday_hours,
+        workspace=workspace,
+        csv=csv,
     )
-    end = end_date or safe_date_parse(Env.end_date) or datetime.now()
-    project = description or Env.description or "Jobb"
-    token = api_token or Env.api_token
-    fig_dir_str = fig_dir or Env.fig_dir or "plots"
-    fig_path = Path(fig_dir_str)
-    if not fig_path.exists():
-        fig_path.mkdir(parents=True)
-    workday = workday_hours or Env.workday_hours or 8
-    if not csv:
-        if not token:
+    if not options.csv:
+        if not options.api_token:
             raise ValueError("API token was not set in arguments or in .env file")
+            # https://track.toggl.com/api/v9/workspaces/4867825/project_users?user_id=6338723
+        calculate_overtime_by_toggl_report(
+            options.api_token,
+            options.workspace,
+            options.description,
+            options.start_date,
+            options.end_date,
+            options.workday_hours,
+            options.fig_dir,
+        )
+        return
         calculate_overtime_by_toggl_api(
-            token, project, start, end, workday_hours=workday, fig_dir=fig_path
+            token, desc, start, end, workday_hours=workday, fig_dir=fig_path
         )
     else:
         calculate_overtime_by_filepath(
-            convert_windows_path_to_wsl(csv),
-            project,
-            start,
-            end,
-            workday_hours=workday,
-            fig_dir=fig_path,
+            options.csv,
+            options.description,
+            options.start_date,
+            options.end_date,
+            options.workday_hours,
+            options.fig_dir,
         )
 
 
