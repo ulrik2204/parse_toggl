@@ -273,6 +273,13 @@ def calculate_overtime_by_filepath(
     calculate_overtime_in_df(df, description, workday_hours, fig_dir)
 
 
+def seconds_to_timedelta(seconds):
+    hours, remainder = divmod(abs(seconds), 3600)
+    minutes, _ = divmod(remainder, 60)
+    sign = "-" if seconds < 0 else ""
+    return f"{sign}{int(hours):02}:{int(minutes):02}"
+
+
 def calculate_overtime_in_df(
     df: pd.DataFrame,
     description: str,
@@ -298,7 +305,9 @@ def calculate_overtime_in_df(
     durations_seconds = df.loc[:, "duration_seconds"]
     work_hours = pd.Timedelta(hours=workday_hours).seconds
     df.loc[:, "time_diff_seconds"] = durations_seconds - work_hours
-    df.loc[:, "time_diff"] = pd.to_timedelta(df["time_diff_seconds"], unit="s")
+    # convert the time_diff_seconds, which can be negative to hours and minutes (which can be negative)
+    df.loc[:, "time_diff_str"] = df["time_diff_seconds"].apply(seconds_to_timedelta)
+    df.loc[:, "duration_str"] = df["duration_seconds"].apply(seconds_to_timedelta)
     print(
         df[
             [
@@ -306,8 +315,8 @@ def calculate_overtime_in_df(
                 "description",
                 "start",
                 "stop",
-                "duration_seconds",
-                "time_diff",
+                "duration_str",
+                "time_diff_str",
             ]
         ]
     )
