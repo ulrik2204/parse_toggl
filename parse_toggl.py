@@ -157,7 +157,6 @@ def fetch_toggl_report_page(
         json=body,
     )
     next_row_number = response.headers.get("X-Next-Row-Number", None)
-    print("next_row_number", next_row_number)
     response.raise_for_status()
     return response.json(), int(next_row_number) if next_row_number else None
 
@@ -175,7 +174,7 @@ def fetch_toggl_report(
     entries, next_row_number = fetch_toggl_report_page(
         api_token, workspade_id, description, start_date, end_date
     )
-    max_calls = 10
+    max_calls = 20
     num_calls = 0
     while next_row_number:
         new_entries, next_row_number = fetch_toggl_report_page(
@@ -184,6 +183,9 @@ def fetch_toggl_report(
         entries.extend(new_entries)
         num_calls += 1
         if num_calls > max_calls:
+            print(
+                f"Max number of recurrent api-calls reached. Current max is {max_calls}."
+            )
             break
     return entries
 
