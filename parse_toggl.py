@@ -477,9 +477,6 @@ def calculate_overtime(
         csv=csv,
     )
     if not options.csv:
-        if not options.api_token:
-            raise ValueError("API token was not set in arguments or in .env file")
-            # https://track.toggl.com/api/v9/workspaces/4867825/project_users?user_id=6338723
         calculate_overtime_by_toggl_report(
             options.api_token,
             options.workspace,
