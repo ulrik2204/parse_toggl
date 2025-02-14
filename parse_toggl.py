@@ -123,13 +123,14 @@ def fetch_toggl_entries(
     return time_entries
 
 
-def fetch_toggl_report(
+def fetch_toggl_report_page(
     api_token: str,
     workspace_id: str,
     description: str,
     start_date: datetime,
     end_date: datetime,
-) -> list[ReportResponse]:
+    first_row_number: Optional[int] = None,
+) -> tuple[list[ReportResponse], Optional[int]]:
     """
     Fetch detailed time entries from the Toggl API filtered by the project name.
     """
@@ -148,13 +149,43 @@ def fetch_toggl_report(
         "grouped": False,
         "description": description,
     }
+    if first_row_number:
+        body["first_row_number"] = first_row_number
     response = requests.post(
         f"https://track.toggl.com/reports/api/v3/workspace/{workspace_id}/search/time_entries",
         auth=auth,
         json=body,
     )
+    next_row_number = response.headers.get("X-Next-Row-Number", None)
+    print("next_row_number", next_row_number)
     response.raise_for_status()
-    return response.json()
+    return response.json(), int(next_row_number) if next_row_number else None
+
+
+def fetch_toggl_report(
+    api_token: str,
+    workspade_id: str,
+    description: str,
+    start_date: datetime,
+    end_date: datetime,
+) -> list[ReportResponse]:
+    """
+    Fetch detailed time entries from the Toggl API filtered by the project name.
+    """
+    entries, next_row_number = fetch_toggl_report_page(
+        api_token, workspade_id, description, start_date, end_date
+    )
+    max_calls = 10
+    num_calls = 0
+    while next_row_number:
+        new_entries, next_row_number = fetch_toggl_report_page(
+            api_token, workspade_id, description, start_date, end_date, next_row_number
+        )
+        entries.extend(new_entries)
+        num_calls += 1
+        if num_calls > max_calls:
+            break
+    return entries
 
 
 def format_toggl_entries(entries: List[TogglTimeEntry]) -> pd.DataFrame:
@@ -216,7 +247,6 @@ def calculate_overtime_by_toggl_report(
     workday_hours: int = 8,
     fig_dir: Path | None = None,
 ):
-    workspace = "4867825"
     report = fetch_toggl_report(api_token, workspace, description, start_date, end_date)
     df = format_toggl_report(report)
     df = filter_by_date(df, start_date, end_date)
