@@ -202,8 +202,8 @@ def format_toggl_entries(entries: List[TogglTimeEntry]) -> pd.DataFrame:
             - description: Description of the time entry
     """
     df = pd.DataFrame(entries)
-    df["start"] = pd.to_datetime(df["start"]).dt.tz_localize(None)
-    df["stop"] = pd.to_datetime(df["stop"]).dt.tz_localize(None)
+    df["start"] = pd.to_datetime(df["start"], utc=True).dt.tz_localize(None)
+    df["stop"] = pd.to_datetime(df["stop"], utc=True).dt.tz_localize(None)
     df["duration"] = pd.to_timedelta(df["duration"], unit="s")
     return df
 
@@ -220,12 +220,14 @@ def format_toggl_report(report: List[ReportResponse]) -> pd.DataFrame:
             - description: Description of the time entry
     """
     df = pd.DataFrame()
+    print("report", report)
     df["project_id"] = [entry["project_id"] for entry in report]
     df["start"] = pd.to_datetime(
-        pd.Series([entry["time_entries"][0]["start"] for entry in report])
+        pd.Series([entry["time_entries"][0]["start"] for entry in report]), utc=True
     ).dt.tz_localize(None)
+
     df["stop"] = pd.to_datetime(
-        pd.Series([entry["time_entries"][0]["stop"] for entry in report])
+        pd.Series([entry["time_entries"][0]["stop"] for entry in report]), utc=True
     ).dt.tz_localize(None)
     df["duration"] = pd.to_timedelta(
         [entry["time_entries"][0]["seconds"] for entry in report], unit="s"
@@ -487,9 +489,9 @@ def calculate_overtime(
             options.fig_dir,
         )
         return
-        calculate_overtime_by_toggl_api(
-            token, desc, start, end, workday_hours=workday, fig_dir=fig_path
-        )
+        # calculate_overtime_by_toggl_api(
+        #     token, desc, start, end, workday_hours=workday, fig_dir=fig_path
+        # )
     else:
         calculate_overtime_by_filepath(
             options.csv,
