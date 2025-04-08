@@ -220,7 +220,6 @@ def format_toggl_report(report: List[ReportResponse]) -> pd.DataFrame:
             - description: Description of the time entry
     """
     df = pd.DataFrame()
-    print("report", report)
     df["project_id"] = [entry["project_id"] for entry in report]
     df["start"] = pd.to_datetime(
         pd.Series([entry["time_entries"][0]["start"] for entry in report]), utc=True
