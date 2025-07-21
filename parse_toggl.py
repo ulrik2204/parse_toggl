@@ -11,6 +11,7 @@ import requests
 from dateutil.parser import parse
 from dotenv import load_dotenv
 from matplotlib import pyplot as plt
+from numpy import absolute
 from requests.auth import HTTPBasicAuth
 
 
@@ -357,17 +358,23 @@ def calculate_overtime_in_df(
     # Calculate total overtime
     total_overtime = float(df["time_diff_seconds"].sum())
     # Convert from seconds to hours and minutes
-    total_overtime = timedelta(seconds=total_overtime)
+    sign = "-" if total_overtime < 0 else ""
+    absolute_overtime = (
+        timedelta(seconds=total_overtime)
+        if total_overtime >= 0
+        else timedelta(seconds=-total_overtime)
+    )
+    overtime_string = f"{sign}{str(absolute_overtime)}"
 
     # Output the result
-    print(f"Total overtime: {total_overtime}")
+    print(f"Total overtime: {overtime_string}")
     df["time_diff_seconds"].plot(kind="line")
     time = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
     name = f"overtime-{time}.png"
     fig_path = fig_dir / name if fig_dir else Path(name)
-    plt.savefig(fig_path.as_posix())
     ## Add a title to the figure about the anount of overtime
-    plt.title(f"Overtime per day (total overtime: {total_overtime})")
+    plt.title(f"Overtime per day (total overtime: {overtime_string})")
+    plt.savefig(fig_path.as_posix())
 
 
 class Env:
