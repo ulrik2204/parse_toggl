@@ -1,3 +1,4 @@
+import math
 import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -127,7 +128,7 @@ def fetch_toggl_entries(
 def fetch_toggl_report_page(
     api_token: str,
     workspace_id: str,
-    description: str,
+    description: str | None,
     start_date: datetime,
     end_date: datetime,
     first_row_number: Optional[int] = None,
@@ -148,8 +149,9 @@ def fetch_toggl_report_page(
         "order_by": "date",
         "order_dir": "asc",
         "grouped": False,
-        "description": description,
     }
+    if description is not None:
+        body["description"] = description
     if first_row_number:
         body["first_row_number"] = first_row_number
     response = requests.post(
@@ -165,7 +167,7 @@ def fetch_toggl_report_page(
 def fetch_toggl_report(
     api_token: str,
     workspade_id: str,
-    description: str,
+    description: str | None,
     start_date: datetime,
     end_date: datetime,
 ) -> list[ReportResponse]:
@@ -245,7 +247,7 @@ def filter_by_date(
 def calculate_overtime_by_toggl_report(
     api_token: str,
     workspace: str,
-    description: str,
+    description: str | None,
     start_date: datetime,
     end_date: datetime,
     workday_hours: int = 8,
@@ -289,7 +291,7 @@ def convert_windows_path_to_wsl(path: str) -> Path:
 
 def calculate_overtime_by_filepath(
     csv: Path,
-    description: str,
+    description: str | None,
     start_date: datetime,
     end_date: datetime,
     workday_hours: int = 8,
@@ -316,24 +318,28 @@ def seconds_to_timedelta(seconds):
 
 def calculate_overtime_in_df(
     df: pd.DataFrame,
-    description: str,
+    description: str | None,
     workday_hours: int = 8,
     fig_dir: Path | None = None,
 ):
     # TODO: Filter by project
     # Filter by description
-    df = df[(df["description"].str.lower().str.contains(description.lower()))].copy()
+    if description is not None:
+        df = df[
+            (df["description"].str.lower().str.contains(description.lower()))
+        ].copy()
     df["duration_seconds"] = df["duration"].dt.total_seconds()
     # Resample to daily
     df = df.resample("D", on="start").agg(
         {
             "project_id": "first",
-            "description": "first",
+            "description": lambda x: ", ".join(x.dropna().unique()),
             "start": "first",
             "stop": "last",
             "duration_seconds": "sum",
         }
     )
+
     # remote nan
     df = df.dropna()
     durations_seconds = df.loc[:, "duration_seconds"]
@@ -400,7 +406,7 @@ class Options:
     start_date: datetime
     end_date: datetime
     api_token: str
-    description: str
+    description: str | None
     fig_dir: Path
     workday_hours: int
     workspace: str
@@ -427,7 +433,7 @@ def setup_options(
     csv_param: Path | None = None
     if csv_path := csv or Env.csv:
         csv_param = convert_windows_path_to_wsl(csv_path)
-    desc = description or Env.description or "Jobb"
+    desc = description or Env.description or None
     token = api_token or Env.api_token
     fig_dir_str = fig_dir or Env.fig_dir or "plots"
     workspace_var = workspace or Env.workspace or None
