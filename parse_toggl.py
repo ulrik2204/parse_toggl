@@ -6,6 +6,9 @@ from pathlib import Path
 from tracemalloc import start
 from typing import List, Optional, TypedDict
 
+import matplotlib
+
+matplotlib.use("Agg")
 import click
 import pandas as pd
 import requests
@@ -132,6 +135,7 @@ def fetch_toggl_report_page(
     start_date: datetime,
     end_date: datetime,
     first_row_number: Optional[int] = None,
+    project_id: Optional[int] = None,
 ) -> tuple[list[ReportResponse], Optional[int]]:
     """
     Fetch detailed time entries from the Toggl API filtered by the project name.
@@ -152,6 +156,8 @@ def fetch_toggl_report_page(
     }
     if description is not None:
         body["description"] = description
+    if project_id is not None:
+        body["project_ids"] = [project_id]
     if first_row_number:
         body["first_row_number"] = first_row_number
     response = requests.post(
@@ -170,18 +176,30 @@ def fetch_toggl_report(
     description: str | None,
     start_date: datetime,
     end_date: datetime,
+    project_id: Optional[int] = None,
 ) -> list[ReportResponse]:
     """
     Fetch detailed time entries from the Toggl API filtered by the project name.
     """
     entries, next_row_number = fetch_toggl_report_page(
-        api_token, workspade_id, description, start_date, end_date
+        api_token,
+        workspade_id,
+        description,
+        start_date,
+        end_date,
+        project_id=project_id,
     )
     max_calls = 20
     num_calls = 0
     while next_row_number:
         new_entries, next_row_number = fetch_toggl_report_page(
-            api_token, workspade_id, description, start_date, end_date, next_row_number
+            api_token,
+            workspade_id,
+            description,
+            start_date,
+            end_date,
+            next_row_number,
+            project_id=project_id,
         )
         entries.extend(new_entries)
         num_calls += 1
@@ -252,11 +270,14 @@ def calculate_overtime_by_toggl_report(
     end_date: datetime,
     workday_hours: int = 8,
     fig_dir: Path | None = None,
+    project_id: Optional[int] = None,
 ):
-    report = fetch_toggl_report(api_token, workspace, description, start_date, end_date)
+    report = fetch_toggl_report(
+        api_token, workspace, description, start_date, end_date, project_id=project_id
+    )
     df = format_toggl_report(report)
     df = filter_by_date(df, start_date, end_date)
-    calculate_overtime_in_df(df, description, workday_hours, fig_dir)
+    calculate_overtime_in_df(df, description, project_id, workday_hours, fig_dir)
 
 
 def calculate_overtime_by_toggl_api(
@@ -296,6 +317,7 @@ def calculate_overtime_by_filepath(
     end_date: datetime,
     workday_hours: int = 8,
     fig_dir: Path | None = None,
+    project_id: Optional[int] = None,
 ):
     """
     Reads a quoted CSV file, calculates the time difference between 'Duration'
@@ -306,7 +328,7 @@ def calculate_overtime_by_filepath(
     # Convert 'Duration' to timedelta (assuming format is HH:MM:SS or similar)
     df["duration"] = pd.to_timedelta(df["Duration"])
     df = filter_by_date(df, start_date, end_date)
-    calculate_overtime_in_df(df, description, workday_hours, fig_dir)
+    calculate_overtime_in_df(df, description, project_id, workday_hours, fig_dir)
 
 
 def seconds_to_timedelta(seconds):
@@ -319,16 +341,19 @@ def seconds_to_timedelta(seconds):
 def calculate_overtime_in_df(
     df: pd.DataFrame,
     description: str | None,
+    project_id: Optional[int] = None,
     workday_hours: int = 8,
     fig_dir: Path | None = None,
 ):
-    # TODO: Filter by project
     # Filter by description
+    df = df.copy()
     if description is not None:
         df = df[
             (df["description"].str.lower().str.contains(description.lower()))
         ].copy()
-    df["duration_seconds"] = df["duration"].dt.total_seconds()
+    if project_id is not None:
+        df = df[df["project_id"] == project_id].copy()
+    df = df.assign(duration_seconds=df["duration"].dt.total_seconds())
     # Resample to daily
     df = df.resample("D", on="start").agg(
         {
@@ -374,13 +399,14 @@ def calculate_overtime_in_df(
 
     # Output the result
     print(f"Total overtime: {overtime_string}")
-    df["time_diff_seconds"].plot(kind="line")
+    fig, ax = plt.subplots()
+    ax.plot(df.index, df["time_diff_seconds"])
     time = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
     name = f"overtime-{time}.png"
     fig_path = fig_dir / name if fig_dir else Path(name)
-    ## Add a title to the figure about the anount of overtime
-    plt.title(f"Overtime per day (total overtime: {overtime_string})")
-    plt.savefig(fig_path.as_posix())
+    ax.set_title(f"Overtime per day (total overtime: {overtime_string})")
+    fig.savefig(fig_path.as_posix())
+    plt.close(fig)
 
 
 class Env:
@@ -393,6 +419,7 @@ class Env:
     fig_dir: str | None = os.getenv("FIG_DIR", default=None)
     workday_hours: int = int(os.getenv("WORKDAY_HOURS", default=8))
     workspace: str | None = os.getenv("WORKSPACE", default=None)
+    project_id: int | None = int(v) if (v := os.getenv("PROJECT_ID")) else None
 
 
 def safe_date_parse(date: str | None) -> datetime | None:
@@ -411,6 +438,7 @@ class Options:
     workday_hours: int
     workspace: str
     csv: Path | None
+    project_id: int | None
 
 
 def setup_options(
@@ -423,6 +451,7 @@ def setup_options(
     fig_dir: str | None,
     workday_hours: int,
     workspace: str | None,
+    project_id: int | None,
 ):
     start = (
         start_date
@@ -437,6 +466,7 @@ def setup_options(
     token = api_token or Env.api_token
     fig_dir_str = fig_dir or Env.fig_dir or "plots"
     workspace_var = workspace or Env.workspace or None
+    project_id_var = project_id or Env.project_id or None
     fig_path = Path(fig_dir_str)
     if not token:
         raise ValueError("API token was not set in arguments or in .env file")
@@ -454,6 +484,7 @@ def setup_options(
         workday_hours=workday_hours,
         workspace=workspace_var,
         csv=csv_param,
+        project_id=project_id_var,
     )
 
 
@@ -466,6 +497,7 @@ def setup_options(
 @click.option("--fig_dir", type=str)
 @click.option("--workday_hours", type=int, default=8)
 @click.option("--workspace", type=str)
+@click.option("--project_id", type=int)
 def calculate_overtime(
     csv: str | None,
     start_date: datetime | None,
@@ -475,6 +507,7 @@ def calculate_overtime(
     fig_dir: str | None,
     workday_hours: int = 8,
     workspace: str | None = None,
+    project_id: int | None = None,
 ):
     """
     Reads a quoted CSV file, calculates the time difference between 'Duration'
@@ -489,6 +522,7 @@ def calculate_overtime(
         workday_hours=workday_hours,
         workspace=workspace,
         csv=csv,
+        project_id=project_id,
     )
     if not options.csv:
         calculate_overtime_by_toggl_report(
@@ -499,6 +533,7 @@ def calculate_overtime(
             options.end_date,
             options.workday_hours,
             options.fig_dir,
+            project_id=options.project_id,
         )
         return
         # calculate_overtime_by_toggl_api(
@@ -512,6 +547,7 @@ def calculate_overtime(
             options.end_date,
             options.workday_hours,
             options.fig_dir,
+            project_id=options.project_id,
         )
 
 
