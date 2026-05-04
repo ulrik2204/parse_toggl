@@ -14,14 +14,14 @@ pip install -r requirements.txt
 
 ## Usage
 
-If you want to retrieve your last 30 days of work, simply run the script with the evironment variable `TOGGL_API_KEY` set to your Toggl API key.
+If you want to retrieve your last 30 days of work, simply run the script with the evironment variable `TOGGL_API_TOKEN` set to your Toggl API key.
 ```bash
 python parse_toggl.py 
 ```
 
 With options
 ```bash
-python parse_toggl.py --start-date 2022-01-01 --end-date 2022-02-01 --api-key <your-api-key> --description <description> --csv <your_toggl_entries.csv>
+python parse_toggl.py --start-date 2022-01-01 --end-date 2022-02-01 --api-token <your-api-token> --description <description> --csv <your_toggl_entries.csv>
 ```
 
 If the csv is defined, the Toggl API will not be called and the csv will be used instead.
