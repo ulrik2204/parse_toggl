@@ -280,24 +280,6 @@ def calculate_overtime_by_toggl_report(
     calculate_overtime_in_df(df, description, project_id, workday_hours, fig_dir)
 
 
-def calculate_overtime_by_toggl_api(
-    api_token,
-    description,
-    start_date: datetime,
-    end_date: datetime,
-    workday_hours: int = 8,
-    fig_dir: Path | None = None,
-):
-    """
-    Fetches time entries from the Toggl API and calculates the overtime.
-    """
-    entries = fetch_toggl_entries(api_token, start_date, end_date)
-    df = format_toggl_entries(entries)
-    df = filter_by_date(df, start_date, end_date)
-
-    calculate_overtime_in_df(df, description, workday_hours, fig_dir)
-
-
 def convert_windows_path_to_wsl(path: str) -> Path:
     """
     Converts a Windows-style file path (e.g., C:\\Users\\...) into
@@ -536,9 +518,6 @@ def calculate_overtime(
             project_id=options.project_id,
         )
         return
-        # calculate_overtime_by_toggl_api(
-        #     token, desc, start, end, workday_hours=workday, fig_dir=fig_path
-        # )
     else:
         calculate_overtime_by_filepath(
             options.csv,
